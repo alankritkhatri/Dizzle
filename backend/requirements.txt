@@ -2,7 +2,7 @@ fastapi
 uvicorn
 sqlalchemy
 psycopg2-binary
-pydantic
+pydantic<2
 python-multipart
 pandas
 celery

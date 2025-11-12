@@ -33,8 +33,10 @@ export default function FileUpload() {
         setStatus("processing")
         setStatusText(`Job ${job_id} started`)
         // Open WebSocket for progress
-        const wsProto = location.protocol === "https:" ? "wss" : "ws"
-        const ws = new WebSocket(`${wsProto}://${location.host}/ws/import-progress/${job_id}`)
+        const api = new URL(API_BASE_URL)
+        const wsProto = api.protocol === "https:" ? "wss" : "ws"
+        const wsHost = api.host
+        const ws = new WebSocket(`${wsProto}://${wsHost}/ws/import-progress/${job_id}`)
         ws.onmessage = (ev) => {
           try {
             const msg = JSON.parse(ev.data)
