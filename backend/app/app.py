@@ -7,3 +7,7 @@ app = FastAPI()
 def default():
     return {"message":"helloworld"}
 
+
+
+text_posts = {}
+
