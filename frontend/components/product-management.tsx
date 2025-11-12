@@ -160,9 +160,8 @@ export default function ProductManagement() {
                   <td className="px-6 py-4 text-sm text-foreground">-</td>
                   <td className="px-6 py-4 text-sm">
                     <span
-                      className={`px-3 py-1 rounded-full text-xs font-medium ${
-                        product.active ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"
-                      }`}
+                      className={`px-3 py-1 rounded-full text-xs font-medium ${product.active ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"
+                        }`}
                     >
                       {product.active ? "Active" : "Inactive"}
                     </span>
@@ -202,11 +201,10 @@ export default function ProductManagement() {
                 <button
                   key={page}
                   onClick={() => setCurrentPage(page)}
-                  className={`px-3 py-1 rounded text-sm ${
-                    currentPage === page
+                  className={`px-3 py-1 rounded text-sm ${currentPage === page
                       ? "bg-primary text-primary-foreground"
                       : "border border-border hover:bg-[#2a2a2a]"
-                  }`}
+                    }`}
                 >
                   {page}
                 </button>
