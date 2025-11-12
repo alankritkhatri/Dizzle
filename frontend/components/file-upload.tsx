@@ -4,39 +4,63 @@ import type React from "react"
 
 import { useState } from "react"
 import { Upload, CheckCircle, AlertCircle, Loader } from "lucide-react"
+import { API_BASE_URL } from "../lib/api"
 
-type UploadStatus = "idle" | "uploading" | "success" | "error"
+type UploadStatus = "idle" | "uploading" | "processing" | "success" | "error"
 
 export default function FileUpload() {
   const [status, setStatus] = useState<UploadStatus>("idle")
   const [progress, setProgress] = useState(0)
   const [fileName, setFileName] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
+  const [statusText, setStatusText] = useState("")
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
       setFileName(file.name)
       setStatus("uploading")
       setErrorMessage("")
-
-      // Simulate upload progress
-      let currentProgress = 0
-      const interval = setInterval(() => {
-        currentProgress += Math.random() * 30
-        if (currentProgress > 95) {
-          currentProgress = 95
+      try {
+        const fd = new FormData()
+        fd.append("file", file)
+        const res = await fetch(`${API_BASE_URL}/upload-csv`, { method: "POST", body: fd })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }))
+          throw new Error(err.detail || "Upload failed")
         }
-        setProgress(Math.min(currentProgress, 100))
-
-        if (currentProgress >= 95) {
-          clearInterval(interval)
-          setTimeout(() => {
-            setProgress(100)
-            setStatus("success")
-          }, 500)
+        const { job_id } = await res.json()
+        setStatus("processing")
+        setStatusText(`Job ${job_id} started`)
+        // Open WebSocket for progress
+        const wsProto = location.protocol === "https:" ? "wss" : "ws"
+        const ws = new WebSocket(`${wsProto}://${location.host}/ws/import-progress/${job_id}`)
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data)
+            const processed = msg.processed || 0
+            const total = msg.total || 0
+            const pct = total ? Math.floor((processed / total) * 100) : 0
+            setProgress(pct)
+            setStatusText(msg.message || msg.status || "")
+            if (msg.status === "complete") {
+              ws.close()
+              setStatus("success")
+            } else if (msg.status === "failed") {
+              ws.close()
+              setErrorMessage(msg.message || "Import failed")
+              setStatus("error")
+            }
+          } catch { }
         }
-      }, 300)
+        ws.onerror = () => {
+          // keep UI usable even if ws fails
+          setStatusText("Tracking progress...")
+        }
+      } catch (err: any) {
+        setErrorMessage(err?.message || "Upload failed")
+        setStatus("error")
+      }
     }
   }
 
@@ -73,13 +97,13 @@ export default function FileUpload() {
         )}
 
         {/* Uploading State */}
-        {status === "uploading" && (
+        {(status === "uploading" || status === "processing") && (
           <div className="bg-[#0f0f0f] border border-border rounded-lg p-8">
             <div className="flex items-center gap-4 mb-6">
               <Loader className="text-secondary animate-spin" size={24} />
               <div>
                 <p className="font-medium text-foreground">{fileName}</p>
-                <p className="text-sm text-muted-foreground">Processing upload...</p>
+                <p className="text-sm text-muted-foreground">{statusText || "Processing upload..."}</p>
               </div>
             </div>
 

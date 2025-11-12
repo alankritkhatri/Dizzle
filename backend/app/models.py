@@ -1,4 +1,12 @@
-from sqlalchemy import (    Column, Integer, String, Boolean, DateTime, Text, func, UniqueConstraint, Index
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Boolean,
+    DateTime,
+    Text,
+    UniqueConstraint,
+    Index,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
@@ -6,7 +14,7 @@ from datetime import datetime
 Base = declarative_base()
 
 class Product(Base):
-    __table__ == "products"
+    __tablename__ = "products"
     id = Column(Integer,primary_key=True)
     sku = Column(String(128), nullable=False)               # original SKU (case preserved)
     sku_lower = Column(String(128), nullable=False)         # normalized lowercase SKU

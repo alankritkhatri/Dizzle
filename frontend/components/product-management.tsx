@@ -1,25 +1,24 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Search, Plus, Edit, Trash2, ChevronLeft, ChevronRight } from "lucide-react"
+import { API_BASE_URL } from "../lib/api"
 
-interface Product {
+interface ApiProduct {
   id: number
   sku: string
   name: string
-  price: number
-  quantity: number
+  price_cents?: number | null
+  description?: string | null
   active: boolean
 }
 
-const mockProducts: Product[] = [
-  { id: 1, sku: "PROD-001", name: "Wireless Headphones", price: 79.99, quantity: 145, active: true },
-  { id: 2, sku: "PROD-002", name: "USB-C Cable", price: 12.99, quantity: 892, active: true },
-  { id: 3, sku: "PROD-003", name: "Phone Case", price: 24.99, quantity: 0, active: false },
-  { id: 4, sku: "PROD-004", name: "Screen Protector", price: 9.99, quantity: 2145, active: true },
-  { id: 5, sku: "PROD-005", name: "Charging Stand", price: 34.99, quantity: 67, active: true },
-  { id: 6, sku: "PROD-006", name: "Keyboard", price: 89.99, quantity: 34, active: false },
-]
+interface ApiListResponse {
+  total: number
+  page: number
+  per_page: number
+  items: ApiProduct[]
+}
 
 export default function ProductManagement() {
   const [searchTerm, setSearchTerm] = useState("")
@@ -27,6 +26,36 @@ export default function ProductManagement() {
   const [currentPage, setCurrentPage] = useState(1)
   const [editingId, setEditingId] = useState<number | null>(null)
   const itemsPerPage = 5
+  const [items, setItems] = useState<ApiProduct[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchProducts = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const url = new URL(`${API_BASE_URL}/products`)
+      if (searchTerm) url.searchParams.set("q", searchTerm)
+      if (filterActive !== null) url.searchParams.set("active", String(filterActive))
+      url.searchParams.set("page", String(currentPage))
+      url.searchParams.set("per_page", String(itemsPerPage))
+      const res = await fetch(url.toString())
+      if (!res.ok) throw new Error(await res.text())
+      const data: ApiListResponse = await res.json()
+      setItems(data.items)
+      setTotal(data.total)
+    } catch (e: any) {
+      setError(e?.message || "Failed to load products")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchProducts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, filterActive, currentPage])
 
   const filteredProducts = useMemo(() => {
     return mockProducts.filter((product) => {
@@ -38,8 +67,19 @@ export default function ProductManagement() {
     })
   }, [searchTerm, filterActive])
 
-  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage)
-  const paginatedProducts = filteredProducts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
+  const totalPages = Math.max(1, Math.ceil(total / itemsPerPage))
+  const paginatedProducts = items
+
+  const onBulkDelete = async () => {
+    if (!confirm("Are you sure? This cannot be undone.")) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/products?confirm=true`, { method: "DELETE" })
+      if (!res.ok) throw new Error(await res.text())
+      await fetchProducts()
+    } catch (e: any) {
+      alert(e?.message || "Failed to delete")
+    }
+  }
 
   return (
     <div className="p-8">
@@ -82,7 +122,7 @@ export default function ProductManagement() {
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
         </select>
-        <button className="bg-destructive text-destructive-foreground px-4 py-2 rounded-lg hover:bg-destructive/90 transition-colors">
+        <button onClick={onBulkDelete} className="bg-destructive text-destructive-foreground px-4 py-2 rounded-lg hover:bg-destructive/90 transition-colors">
           Delete All
         </button>
       </div>
@@ -102,12 +142,22 @@ export default function ProductManagement() {
               </tr>
             </thead>
             <tbody>
-              {paginatedProducts.map((product) => (
+              {loading && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-6 text-center text-muted-foreground">Loading...</td>
+                </tr>
+              )}
+              {error && !loading && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-6 text-center text-destructive">{error}</td>
+                </tr>
+              )}
+              {!loading && !error && paginatedProducts.map((product) => (
                 <tr key={product.id} className="border-b border-border hover:bg-[#1a1a1a] transition-colors">
                   <td className="px-6 py-4 text-sm font-medium text-foreground">{product.sku}</td>
                   <td className="px-6 py-4 text-sm text-foreground">{product.name}</td>
-                  <td className="px-6 py-4 text-sm text-foreground">${product.price.toFixed(2)}</td>
-                  <td className="px-6 py-4 text-sm text-foreground">{product.quantity}</td>
+                  <td className="px-6 py-4 text-sm text-foreground">${((product.price_cents || 0) / 100).toFixed(2)}</td>
+                  <td className="px-6 py-4 text-sm text-foreground">-</td>
                   <td className="px-6 py-4 text-sm">
                     <span
                       className={`px-3 py-1 rounded-full text-xs font-medium ${
