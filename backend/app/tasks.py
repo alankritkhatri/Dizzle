@@ -36,6 +36,11 @@ def publish_progress(job_id: int, message: dict):
         ex=3600  # Expire after 1 hour
     )
 
+
+@celery_app.task(name="ping_task")
+def ping_task():
+    return "pong"
+
 @celery_app.task(bind=True, name="import_csv_task", acks_late=True)
 def import_csv_task(self, file_path: str, job_id: int):
     db = SessionLocal()
