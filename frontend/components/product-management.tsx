@@ -31,6 +31,13 @@ export default function ProductManagement() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pendingId, setPendingId] = useState<number | null>(null)
+  const [showAdd, setShowAdd] = useState(false)
+  const [formSku, setFormSku] = useState("")
+  const [formName, setFormName] = useState("")
+  const [formPrice, setFormPrice] = useState("") // dollars string
+  const [formDescription, setFormDescription] = useState("")
+  const [formActive, setFormActive] = useState(true)
+  const [saving, setSaving] = useState(false)
 
   const fetchProducts = async () => {
     setLoading(true)
@@ -112,6 +119,44 @@ export default function ProductManagement() {
       .catch(e => alert(e.message))
   }
 
+  const resetForm = () => {
+    setFormSku("")
+    setFormName("")
+    setFormPrice("")
+    setFormDescription("")
+    setFormActive(true)
+  }
+
+  const onCreateProduct = async () => {
+    if (!formSku.trim() || !formName.trim()) {
+      alert("SKU and Name are required")
+      return
+    }
+    const price_cents = formPrice ? Math.round(parseFloat(formPrice) * 100) : 0
+    setSaving(true)
+    try {
+      const res = await fetch(`${API_BASE_URL}/products`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sku: formSku.trim(),
+          name: formName.trim(),
+          description: formDescription,
+          price_cents,
+          active: formActive,
+        }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      setShowAdd(false)
+      resetForm()
+      await fetchProducts()
+    } catch (e: any) {
+      alert(e?.message || "Failed to create product")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="p-8">
       <div className="flex justify-between items-start mb-8">
@@ -119,7 +164,7 @@ export default function ProductManagement() {
           <h1 className="text-4xl font-bold text-foreground">Products</h1>
           <p className="text-muted-foreground mt-2">Manage all imported products</p>
         </div>
-        <button className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors">
+        <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors">
           <Plus size={20} />
           Add Product
         </button>
@@ -256,6 +301,87 @@ export default function ProductManagement() {
           </div>
         </div>
       </div>
+
+      {showAdd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-lg bg-[#0f0f0f] border border-border rounded-xl p-6 shadow-xl">
+            <h3 className="text-xl font-semibold text-foreground mb-4">Add Product</h3>
+            <div className="grid grid-cols-1 gap-4">
+              <div>
+                <label className="block text-sm text-muted-foreground mb-1">SKU</label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={formSku}
+                  onChange={(e) => setFormSku(e.target.value)}
+                  className="w-full bg-[#0f0f0f] border border-border rounded-lg px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                  placeholder="ABC-123"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-muted-foreground mb-1">Name</label>
+                <input
+                  type="text"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  className="w-full bg-[#0f0f0f] border border-border rounded-lg px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                  placeholder="Awesome Product"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-muted-foreground mb-1">Price (USD)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={formPrice}
+                    onChange={(e) => setFormPrice(e.target.value)}
+                    className="w-full bg-[#0f0f0f] border border-border rounded-lg px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <label className="inline-flex items-center gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={formActive}
+                      onChange={(e) => setFormActive(e.target.checked)}
+                      className="rounded"
+                    />
+                    Active
+                  </label>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-muted-foreground mb-1">Description</label>
+                <textarea
+                  rows={3}
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                  className="w-full bg-[#0f0f0f] border border-border rounded-lg px-3 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
+                  placeholder="Optional description"
+                />
+              </div>
+            </div>
+            <div className="mt-6 flex gap-3 justify-end">
+              <button
+                onClick={() => { setShowAdd(false); resetForm(); }}
+                className="px-4 py-2 border border-border rounded-lg hover:bg-[#1a1a1a]"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={saving}
+                onClick={onCreateProduct}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? "Saving..." : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

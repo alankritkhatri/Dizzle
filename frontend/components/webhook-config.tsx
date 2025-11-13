@@ -30,7 +30,7 @@ export default function WebhookConfig() {
       const res = await fetch(`${API_BASE_URL}/webhooks`)
       const data = await res.json()
       setWebhooks(data)
-    } catch {}
+    } catch { }
   }
 
   useEffect(() => {
@@ -72,7 +72,11 @@ export default function WebhookConfig() {
     try {
       const res = await fetch(`${API_BASE_URL}/webhooks/${id}/test`, { method: "POST" })
       const data = await res.json()
-      alert(data.success ? `Success: ${data.status}` : `Failed: ${data.error || data.status}`)
+      if (data.success) {
+        alert(`Success: ${data.status} in ${data.duration_ms || 0}ms`)
+      } else {
+        alert(`Failed: ${data.error || data.status}`)
+      }
     } catch (e: any) {
       alert(`Error: ${e.message}`)
     }
@@ -196,14 +200,12 @@ export default function WebhookConfig() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => toggleWebhook(group.url)}
-                    className={`relative w-12 h-6 rounded-full transition-colors ${
-                      group.enabled ? "bg-primary" : "bg-[#1a1a1a]"
-                    }`}
+                    className={`relative w-12 h-6 rounded-full transition-colors ${group.enabled ? "bg-primary" : "bg-[#1a1a1a]"
+                      }`}
                   >
                     <div
-                      className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${
-                        group.enabled ? "right-1" : "left-1"
-                      }`}
+                      className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${group.enabled ? "right-1" : "left-1"
+                        }`}
                     />
                   </button>
                   <span className="text-sm text-foreground">{group.enabled ? "Enabled" : "Disabled"}</span>

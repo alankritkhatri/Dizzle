@@ -251,6 +251,16 @@ def create_product(payload: ProductCreate, db: Session = Depends(get_db)):
         active=payload.active
     )
     db.add(prod); db.commit(); db.refresh(prod)
+    # Fire product.created asynchronously (best effort)
+    try:
+        tasks.fire_event.delay("product.created", {
+            "id": prod.id,
+            "sku": prod.sku,
+            "name": prod.name,
+            "active": prod.active,
+        })
+    except Exception:
+        pass
     return {
         "id": prod.id,
         "sku": prod.sku,
@@ -511,8 +521,29 @@ def test_webhook(webhook_id: int, db: Session = Depends(get_db)):
     if not wh:
         raise HTTPException(status_code=404, detail="Webhook not found")
     try:
-        res = requests.post(wh.url, json={"event": wh.event, "test": True}, timeout=5)
-        return {"status": res.status_code, "success": res.ok}
+        from .config import settings as _settings
+        import hmac, hashlib, json as _json, time as _time
+        payload = {"event": wh.event, "test": True, "timestamp": _time.time()}
+        headers = {"Content-Type": "application/json", "X-Event": wh.event}
+        if _settings.WEBHOOK_SECRET:
+            body = _json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            sig = hmac.new(_settings.WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
+            headers["X-Signature"] = sig
+            headers["X-Signature-Alg"] = "HMAC-SHA256"
+        start = __import__("time").perf_counter()
+        res = requests.post(
+            wh.url,
+            json=payload,
+            headers=headers,
+            timeout=max(1, int(_settings.WEBHOOK_TIMEOUT_SECONDS or 5)),
+        )
+        duration_ms = int((__import__("time").perf_counter() - start) * 1000)
+        body_preview = None
+        try:
+            body_preview = res.text[:500]
+        except Exception:
+            body_preview = None
+        return {"status": res.status_code, "success": res.ok, "duration_ms": duration_ms, "body": body_preview}
     except Exception as e:
         return {"status": 0, "success": False, "error": str(e)}
 
@@ -533,6 +564,16 @@ def update_product(product_id: int, payload: ProductCreate, db: Session = Depend
     prod.active = payload.active
     db.commit()
     db.refresh(prod)
+    # Fire product.updated asynchronously (best effort)
+    try:
+        tasks.fire_event.delay("product.updated", {
+            "id": prod.id,
+            "sku": prod.sku,
+            "name": prod.name,
+            "active": prod.active,
+        })
+    except Exception:
+        pass
     return {"id": prod.id, "sku": prod.sku, "sku_lower": prod.sku_lower, "name": prod.name, "description": prod.description, "price_cents": prod.price_cents, "active": prod.active, "created_at": prod.created_at, "updated_at": prod.updated_at}
 
 @app.delete("/products/{product_id}")
@@ -540,6 +581,13 @@ def delete_product(product_id: int, db: Session = Depends(get_db)):
     prod = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not prod:
         raise HTTPException(status_code=404, detail="Product not found")
+    pid = prod.id
+    sku = prod.sku
     db.delete(prod)
     db.commit()
+    # Fire product.deleted asynchronously (best effort)
+    try:
+        tasks.fire_event.delay("product.deleted", {"id": pid, "sku": sku})
+    except Exception:
+        pass
     return {"deleted": True}

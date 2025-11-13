@@ -6,7 +6,7 @@ from celery import shared_task, current_task
 from .config import settings
 from .database import engine, SessionLocal
 from . import crud, models
-import csv, io, os, time, json, uuid
+import csv, io, os, time, json, uuid, requests, hmac, hashlib
 from sqlalchemy import text
 from .upstash_redis import get_upstash_client
 
@@ -37,6 +37,48 @@ def publish_progress(job_id: int, message: dict):
     )
 
 
+def _sign_payload(payload: dict) -> str | None:
+    """Return hex HMAC-SHA256 signature of JSON payload if WEBHOOK_SECRET is set."""
+    secret = (settings.WEBHOOK_SECRET or "").encode("utf-8")
+    if not secret:
+        return None
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hmac.new(secret, body, hashlib.sha256).hexdigest()
+
+
+@celery_app.task(bind=True, name="deliver_webhook", autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 6})
+def deliver_webhook(self, webhook_id: int, url: str, event: str, payload: dict):
+    """Deliver a single webhook with retries and timeout."""
+    headers = {
+        "Content-Type": "application/json",
+        "X-Event": event,
+    }
+    sig = _sign_payload(payload)
+    if sig:
+        headers["X-Signature"] = sig
+        headers["X-Signature-Alg"] = "HMAC-SHA256"
+    timeout = max(1, int(settings.WEBHOOK_TIMEOUT_SECONDS or 5))
+    start = time.perf_counter()
+    resp = requests.post(url, json={"event": event, "data": payload}, headers=headers, timeout=timeout)
+    # Consider 2xx as success; otherwise raise to trigger retry
+    if not (200 <= resp.status_code < 300):
+        raise RuntimeError(f"webhook {webhook_id} returned {resp.status_code}")
+    return {"status": resp.status_code, "duration_ms": int((time.perf_counter() - start) * 1000)}
+
+
+@celery_app.task(name="fire_event")
+def fire_event(event: str, payload: dict):
+    """Query enabled webhooks for this event and enqueue delivery tasks."""
+    db = SessionLocal()
+    try:
+        hooks = db.query(models.Webhook).filter(models.Webhook.enabled == True, models.Webhook.event == event).all()
+        for wh in hooks:
+            deliver_webhook.delay(wh.id, wh.url, event, payload)
+        return {"enqueued": len(hooks), "event": event}
+    finally:
+        db.close()
+
+
 @celery_app.task(name="ping_task")
 def ping_task():
     return "pong"
@@ -48,9 +90,15 @@ def import_csv_task(self, file_path: str, job_id: int):
         crud.update_job_progress(db, job_id, processed=0, status="running")
         publish_progress(job_id, {"status":"running","processed":0,"message":"Starting import"})
 
-        # count rows quickly (optional but helpful)
-        with open(file_path, "r", encoding='utf-8', errors='ignore') as f:
-            total = sum(1 for _ in f) - 1  # minus header
+        # Count records accurately using csv (handles quoted newlines) and skip blank SKU rows
+        with open(file_path, "r", newline='', encoding='utf-8', errors='ignore') as f:
+            reader_for_count = csv.DictReader(f)
+            total = 0
+            for r in reader_for_count:
+                sku_val = str(r.get("sku", "")).strip()
+                if not sku_val:
+                    continue
+                total += 1
         crud.update_job_progress(db, job_id, processed=0, total=total)
         publish_progress(job_id, {"status":"running","processed":0,"total":total,"message":"Parsing CSV"})
 
@@ -90,13 +138,12 @@ def import_csv_task(self, file_path: str, job_id: int):
             # Replace tabs/newlines that would break COPY delimiters
             return s.replace("\t", " ").replace("\r", " ").replace("\n", " ")
 
-        with open(file_path, "r", encoding='utf-8', errors='ignore') as f:
+        with open(file_path, "r", newline='', encoding='utf-8', errors='ignore') as f:
             reader = csv.DictReader(f)
             rows = []
-            i = 0
+            buffered = 0  # number of rows currently buffered for COPY
             copy_buffer = io.StringIO()
             for row in reader:
-                i += 1
                 sku = _clean_text(row.get("sku", "")).strip()
                 name = _clean_text(row.get("name", "")).strip()
                 description = _clean_text(row.get("description", ""))
@@ -107,11 +154,14 @@ def import_csv_task(self, file_path: str, job_id: int):
                         price_cents = int(float(price) * 100)
                     except:
                         price_cents = None
+                # skip rows with no SKU
+                if not sku:
+                    continue
                 # normalize and write tab-separated for COPY
                 price_col = "" if price_cents is None else str(price_cents)
                 copy_buffer.write(f"{sku}\t{name}\t{description}\t{price_col}\n")
-
-                if i % batch_size == 0:
+                buffered += 1
+                if buffered >= batch_size:
                     copy_buffer.seek(0)
                     if copy_buffer.getvalue():
                         cur.copy_from(
@@ -149,7 +199,8 @@ def import_csv_task(self, file_path: str, job_id: int):
                     # clear temp table
                     cur.execute(f"TRUNCATE {staging_table};")
                     conn.commit()
-                    inserted += batch_size
+                    inserted += buffered
+                    buffered = 0
                     # Persist progress to DB so /import-jobs reflects live progress
                     try:
                         crud.update_job_progress(db, job_id, processed=inserted)
@@ -196,17 +247,27 @@ def import_csv_task(self, file_path: str, job_id: int):
             except Exception:
                 pass
             # count final processed rows (best-effort)
-            inserted += i % batch_size
+            inserted += buffered
             try:
                 crud.update_job_progress(db, job_id, processed=inserted)
             except Exception:
                 pass
-            publish_progress(job_id, {"status":"complete","processed":inserted,"total":total,"message":"Import complete"})
-            crud.update_job_progress(db, job_id, processed=inserted, status="complete")
+            publish_progress(job_id, {"status":"complete","processed":total,"total":total,"message":"Import complete"})
+            # Ensure DB reflects total processed at completion for accurate UI
+            crud.update_job_progress(db, job_id, processed=total, status="complete")
+            # Fire import.completed webhooks asynchronously
+            try:
+                fire_event.delay("import.completed", {"job_id": job_id, "total_rows": total})
+            except Exception:
+                pass
     except Exception as e:
         crud.update_job_progress(db, job_id, processed=0, status="failed", error=str(e))
         publish_progress(job_id, {"status":"failed","message":str(e)})
         # keep file for retry
+        try:
+            fire_event.delay("import.failed", {"job_id": job_id, "error": str(e)})
+        except Exception:
+            pass
         raise
     finally:
         # remove file only on success (status complete and no error)

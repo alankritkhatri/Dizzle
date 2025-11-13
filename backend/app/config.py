@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret"
     MAX_UPLOAD_BYTES: int = 5 * 1024 * 1024 * 1024  # 5GB, configurable
     CSV_BATCH_SIZE: int = 5000  # tuneable
+    WEBHOOK_TIMEOUT_SECONDS: int = 5
+    WEBHOOK_MAX_RETRIES: int = 6
+    WEBHOOK_SECRET: str = ""  # if set, we sign payloads with HMAC-SHA256
 
     class Config:
         # Load env from backend/.env regardless of current working directory
