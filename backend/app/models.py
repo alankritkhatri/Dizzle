@@ -44,6 +44,7 @@ class ImportJob(Base):
     total_rows = Column(Integer, default=0)
     processed_rows = Column(Integer, default=0)
     error = Column(Text, nullable=True)
+    task_id = Column(String(128), nullable=True)  # Celery task id for revoke/cancel
     file_path = Column(String(1024), nullable=True)  # stored until success or manual cleanup
     original_filename = Column(String(512), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

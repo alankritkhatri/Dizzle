@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from .database import SessionLocal, engine
 from sqlalchemy import text
 from . import models, crud, tasks
+from .celery_worker import celery_app
+from celery.result import AsyncResult
 import uuid, os, requests, json, asyncio
 from .config import settings
 from .upstash_redis import get_upstash_client
@@ -115,7 +117,16 @@ async def upload_csv(file:UploadFile = File(...),db:Session = Depends(get_db)):
 
     # update job with file path for potential retry
     crud.update_job_progress(db, job.id, processed=0, status="queued", file_path=dest_path)
-    tasks.import_csv_task.delay(dest_path, job.id)
+    # enqueue task and save task_id for revoke/cancel support
+    async_result = tasks.import_csv_task.delay(dest_path, job.id)
+    try:
+        job_ref = db.get(models.ImportJob, job.id)
+        if job_ref:
+            job_ref.task_id = async_result.id
+            db.add(job_ref)
+            db.commit()
+    except Exception:
+        pass
     return {"job_id": job.id}
 
 # Initialize Upstash Redis client for pub/sub messaging
@@ -307,8 +318,99 @@ def retry_import_job(job_id: int, db: Session = Depends(get_db)):
     job.error = None
     job.updated_at = datetime.utcnow()
     db.add(job); db.commit(); db.refresh(job)
-    tasks.import_csv_task.delay(job.file_path, job.id)
+    async_result = tasks.import_csv_task.delay(job.file_path, job.id)
+    try:
+        job.task_id = async_result.id
+        db.add(job); db.commit(); db.refresh(job)
+    except Exception:
+        pass
     return {"job_id": job.id, "status": job.status}
+
+
+@app.delete("/import-jobs/{job_id}")
+def delete_import_job(job_id: int, db: Session = Depends(get_db)):
+    job = db.get(models.ImportJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    # If queued, revoke the Celery task before delete
+    if job.status == "queued" and job.task_id:
+        try:
+            celery_app.control.revoke(job.task_id, terminate=False)
+        except Exception:
+            pass
+    if job.status == "running":
+        raise HTTPException(status_code=400, detail="Cannot delete a job that is running")
+
+    # Best-effort cleanup of progress key
+    try:
+        upstash_client.delete(f"import_progress:{job_id}:latest")
+    except Exception:
+        pass
+
+    # Remove uploaded file if it still exists (typically for failed jobs retained for retry)
+    try:
+        if job.file_path and os.path.exists(job.file_path):
+            os.remove(job.file_path)
+    except Exception:
+        pass
+
+    db.delete(job)
+    db.commit()
+    return {"deleted": True}
+
+
+@app.post("/import-jobs/{job_id}/cancel")
+def cancel_import_job(job_id: int, force: bool = False, db: Session = Depends(get_db)):
+    job = db.get(models.ImportJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not job.task_id:
+        raise HTTPException(status_code=400, detail="No task_id to cancel")
+    try:
+        # force=True will try to terminate running task (best-effort, platform-dependent)
+        celery_app.control.revoke(job.task_id, terminate=force)
+        job.status = "failed" if job.status == "running" else "queued"
+        job.error = (job.error or "") + (" | canceled" if "canceled" not in (job.error or "") else "")
+        db.add(job); db.commit(); db.refresh(job)
+        return {"canceled": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/worker/health")
+def worker_health():
+    """Ping Celery workers to verify they are reachable."""
+    try:
+        replies = celery_app.control.ping(timeout=2.0) or []
+        return {"workers": replies, "ok": len(replies) > 0}
+    except Exception as e:
+        return {"workers": [], "ok": False, "error": str(e)}
+
+
+@app.get("/tasks/{task_id}")
+def task_status(task_id: str):
+    """Check status/result of a Celery task by id."""
+    try:
+        res = AsyncResult(task_id, app=celery_app)
+        payload = {"id": task_id, "state": res.state}
+        if res.ready():
+            try:
+                payload["result"] = res.result
+            except Exception:
+                payload["result"] = None
+        return payload
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/tasks/ping")
+def enqueue_ping():
+    """Enqueue a tiny ping task to verify async execution."""
+    try:
+        async_result = tasks.ping_task.delay()
+        return {"task_id": async_result.id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 class WebhookCreate(BaseModel):
     url: str

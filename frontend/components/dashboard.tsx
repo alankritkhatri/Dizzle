@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useEffect, useState } from "react"
-import { TrendingUp, FileCheck, AlertCircle, Upload, CheckCircle, Loader, RefreshCcw } from "lucide-react"
+import { TrendingUp, FileCheck, AlertCircle, Upload, CheckCircle, Loader, RefreshCcw, Trash2 } from "lucide-react"
 import { API_BASE_URL } from "../lib/api"
 
 type UploadStatus = "idle" | "uploading" | "processing" | "success" | "error"
@@ -320,10 +320,23 @@ export default function Dashboard() {
                 <div className="text-sm font-medium text-foreground">Job #{job.id} {job.original_filename && (
                   <span className="text-muted-foreground">({job.original_filename})</span>
                 )}</div>
-                <div
-                  className={`text-xs px-2 py-1 rounded ${job.status === 'complete' ? 'bg-primary/10 text-primary' : job.status === 'failed' ? 'bg-destructive/10 text-destructive' : 'bg-secondary/10 text-secondary'}`}
-                >
-                  {job.status}
+                <div className="flex items-center gap-2">
+                  <div
+                    className={`text-xs px-2 py-1 rounded ${job.status === 'complete' ? 'bg-primary/10 text-primary' : job.status === 'failed' ? 'bg-destructive/10 text-destructive' : 'bg-secondary/10 text-secondary'}`}
+                  >
+                    {job.status}
+                  </div>
+                  <button
+                    className="text-xs px-2 py-1 border border-border rounded hover:bg-[#1a1a1a] flex items-center gap-1 disabled:opacity-50"
+                    title={job.status === 'running' ? 'Cannot delete running job' : 'Delete job'}
+                    disabled={job.status === 'running'}
+                    onClick={async () => {
+                      await fetch(`${API_BASE_URL}/import-jobs/${job.id}`, { method: 'DELETE' })
+                      fetchJobs()
+                    }}
+                  >
+                    <Trash2 size={14} /> Delete
+                  </button>
                 </div>
               </div>
               <div className="w-full bg-[#1a1a1a] h-2 rounded overflow-hidden mb-2">
