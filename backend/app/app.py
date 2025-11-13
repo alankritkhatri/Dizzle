@@ -31,14 +31,43 @@ def get_db():
     finally:
         db.close()
 
-UPLOAD_DIR = "/tmp/uploads"
+# Cross-platform upload directory (works on Windows and Unix)
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@app.get("/")
+def root():
+    """Root endpoint - API health check"""
+    return {
+        "status": "ok",
+        "app": "Dizzle Product Importer",
+        "version": "1.0.0",
+        "endpoints": {
+            "docs": "/docs",
+            "upload": "/upload-csv",
+            "products": "/products",
+            "webhooks": "/webhooks",
+            "stats": "/stats"
+        }
+    }
 
 
 @app.post("/upload-csv")
 async def upload_csv(file:UploadFile = File(...),db:Session = Depends(get_db)):
-    if not file.filename.endswith((".csv")):
-        raise HTTPException(status_code=400,detail = "please upload a csv file")
+    """
+    Upload and process a CSV file containing product data.
+    Maximum file size: 5GB (configurable via MAX_UPLOAD_BYTES)
+    Required columns: sku, name, description, price
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Expected .csv file, got: {file.filename}"
+        )
 
     job  = crud.create_import_job(db)
     file_id = f"{job.id}_{uuid.uuid4().hex}_{file.filename}"
@@ -54,9 +83,13 @@ async def upload_csv(file:UploadFile = File(...),db:Session = Depends(get_db)):
                 out_f.close()
                 try:
                     os.remove(dest_path)
-                finally:
+                except:
                     pass
-                raise HTTPException(status_code=413, detail="File too large")
+                max_size_mb = settings.MAX_UPLOAD_BYTES / (1024 * 1024)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum size: {max_size_mb:.0f}MB"
+                )
             out_f.write(chunk)
 
     # enqueue async import

@@ -1,4 +1,7 @@
 # app/tasks.py
+from .celery_worker import celery_app
+
+# app/tasks.py
 from celery import shared_task, current_task
 from .config import settings
 from .database import engine, SessionLocal
@@ -33,7 +36,7 @@ def publish_progress(job_id: int, message: dict):
         ex=3600  # Expire after 1 hour
     )
 
-@shared_task(bind=True, name="import_csv_task", acks_late=True)
+@celery_app.task(bind=True, name="import_csv_task", acks_late=True)
 def import_csv_task(self, file_path: str, job_id: int):
     db = SessionLocal()
     try:
@@ -54,15 +57,17 @@ def import_csv_task(self, file_path: str, job_id: int):
         conn = engine.raw_connection()
         cur = conn.cursor()
 
-        # create temp table
-        cur.execute("""
-            CREATE TEMP TABLE tmp_products (
+        # create temp table (preserve across commits within this session)
+        cur.execute(
+            """
+            CREATE TEMP TABLE IF NOT EXISTS tmp_products (
                 sku text,
                 name text,
                 description text,
                 price_cents integer
-            ) ON COMMIT DROP;
-        """)
+            );
+            """
+        )
         conn.commit()
 
         # open file and copy rows in chunks

@@ -2,10 +2,14 @@ from celery import Celery
 from app.config import settings
 
 
+# Fallback to REDIS_URL if explicit Celery URLs are not provided
+broker_url = settings.CELERY_BROKER_URL or settings.REDIS_URL
+result_backend = settings.CELERY_RESULT_BACKEND or settings.REDIS_URL
+
 celery_app = Celery(
     "worker",
-    broker = settings.CELERY_BROKER_URL,
-    backend = settings.CELERY_RESULT_BACKEND
+    broker=broker_url,
+    backend=result_backend,
 )
 
 celery_app.conf.task_serializer = "json"
