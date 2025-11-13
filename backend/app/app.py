@@ -9,6 +9,7 @@ from celery.result import AsyncResult
 import uuid, os, requests, json, asyncio
 from .config import settings
 from .upstash_redis import get_upstash_client
+from pathlib import Path
 
 app = FastAPI()
 
@@ -411,6 +412,51 @@ def enqueue_ping():
         return {"task_id": async_result.id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _mask_url(url: str) -> str:
+    if not url:
+        return ""
+    try:
+        # very simple mask for credentials in redis/rediss URLs
+        if "@" in url and "://" in url:
+            scheme, rest = url.split("://", 1)
+            if "@" in rest and ":" in rest.split("@",1)[0]:
+                creds, host = rest.split("@", 1)
+                user = creds.split(":",1)[0]
+                return f"{scheme}://{user}:***@{host}"
+        return url
+    except Exception:
+        return url
+
+
+@app.get("/debug/celery")
+def debug_celery():
+    """Return masked Celery configuration and ping result for quick diagnosis."""
+    try:
+        replies = celery_app.control.ping(timeout=2.0) or []
+    except Exception as e:
+        replies = [{"error": str(e)}]
+    from app.celery_worker import broker_url as bk, result_backend as rb
+    return {
+        "broker": _mask_url(bk),
+        "result_backend": _mask_url(rb),
+        "workers": replies,
+        "autodiscover": ["app.tasks"],
+    }
+
+
+@app.get("/debug/env")
+def debug_env():
+    """Return masked env-related settings and the expected .env path."""
+    env_path = str((Path(__file__).resolve().parents[1] / ".env").resolve())
+    return {
+        "env_path": env_path,
+        "CELERY_BROKER_URL": _mask_url(settings.CELERY_BROKER_URL or ""),
+        "CELERY_RESULT_BACKEND": _mask_url(settings.CELERY_RESULT_BACKEND or ""),
+        "REDIS_URL": _mask_url(settings.REDIS_URL or ""),
+        "DATABASE_URL_set": bool(settings.DATABASE_URL),
+    }
 
 class WebhookCreate(BaseModel):
     url: str

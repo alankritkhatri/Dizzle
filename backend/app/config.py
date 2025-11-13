@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field
+from pathlib import Path
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://postgres:postgres@db:5432/postgres"
@@ -20,7 +21,8 @@ class Settings(BaseSettings):
     CSV_BATCH_SIZE: int = 5000  # tuneable
 
     class Config:
-        env_file = ".env"
+        # Load env from backend/.env regardless of current working directory
+        env_file = str((Path(__file__).resolve().parents[1] / ".env").resolve())
         case_sensitive = False
         extra = "ignore"
 

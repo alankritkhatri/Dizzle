@@ -6,7 +6,7 @@ from celery import shared_task, current_task
 from .config import settings
 from .database import engine, SessionLocal
 from . import crud, models
-import csv, io, os, time, json
+import csv, io, os, time, json, uuid
 from sqlalchemy import text
 from .upstash_redis import get_upstash_client
 
@@ -58,14 +58,15 @@ def import_csv_task(self, file_path: str, job_id: int):
         batch_size = settings.CSV_BATCH_SIZE
         inserted = 0
 
-        # fast path: use COPY to load into temp table, then upsert
+        # fast path: use COPY to load into a per-job staging table, then upsert
         conn = engine.raw_connection()
         cur = conn.cursor()
 
-        # create temp table (preserve across commits within this session)
+        # Create a unique UNLOGGED staging table per job to avoid temp-table scope issues
+        staging_table = f"staging_products_{job_id}_{uuid.uuid4().hex[:8]}"
         cur.execute(
-            """
-            CREATE TEMP TABLE IF NOT EXISTS tmp_products (
+            f"""
+            CREATE UNLOGGED TABLE {staging_table} (
                 sku text,
                 name text,
                 description text,
@@ -115,7 +116,7 @@ def import_csv_task(self, file_path: str, job_id: int):
                     if copy_buffer.getvalue():
                         cur.copy_from(
                             copy_buffer,
-                            'tmp_products',
+                            staging_table,
                             sep="\t",
                             columns=('sku','name','description','price_cents'),
                             null=''  # treat empty string as NULL
@@ -124,7 +125,7 @@ def import_csv_task(self, file_path: str, job_id: int):
                     copy_buffer = io.StringIO()
                     # upsert tmp_products -> products with in-batch deduplication on sku_lower
                     cur.execute(
-                        """
+                        f"""
                         INSERT INTO products (sku, sku_lower, name, description, price_cents, active, created_at, updated_at)
                         SELECT sku, sku_lower, name, description, price_cents, true, now(), now()
                         FROM (
@@ -132,7 +133,7 @@ def import_csv_task(self, file_path: str, job_id: int):
                                    sku, sku_lower, name, description, price_cents
                             FROM (
                                 SELECT lower(sku) AS sku_lower, sku, name, description, price_cents, ctid
-                                FROM tmp_products
+                                FROM {staging_table}
                             ) t
                             ORDER BY sku_lower, ctid DESC
                         ) d
@@ -146,23 +147,28 @@ def import_csv_task(self, file_path: str, job_id: int):
                     )
                     conn.commit()
                     # clear temp table
-                    cur.execute("TRUNCATE tmp_products;")
+                    cur.execute(f"TRUNCATE {staging_table};")
                     conn.commit()
                     inserted += batch_size
+                    # Persist progress to DB so /import-jobs reflects live progress
+                    try:
+                        crud.update_job_progress(db, job_id, processed=inserted)
+                    except Exception:
+                        pass
                     publish_progress(job_id, {"status":"running","processed":inserted,"total":total, "message": f"Processed {inserted}/{total}"})
             # final flush
             copy_buffer.seek(0)
             if copy_buffer.getvalue():
                 cur.copy_from(
                     copy_buffer,
-                    'tmp_products',
+                    staging_table,
                     sep="\t",
                     columns=('sku','name','description','price_cents'),
                     null=''  # treat empty string as NULL
                 )
             conn.commit()
             cur.execute(
-                """
+                f"""
                 INSERT INTO products (sku, sku_lower, name, description, price_cents, active, created_at, updated_at)
                 SELECT sku, sku_lower, name, description, price_cents, true, now(), now()
                 FROM (
@@ -170,7 +176,7 @@ def import_csv_task(self, file_path: str, job_id: int):
                            sku, sku_lower, name, description, price_cents
                     FROM (
                         SELECT lower(sku) AS sku_lower, sku, name, description, price_cents, ctid
-                        FROM tmp_products
+                        FROM {staging_table}
                     ) t
                     ORDER BY sku_lower, ctid DESC
                 ) d
@@ -183,8 +189,18 @@ def import_csv_task(self, file_path: str, job_id: int):
                 """
             )
             conn.commit()
+            # Drop staging table to clean up
+            try:
+                cur.execute(f"DROP TABLE IF EXISTS {staging_table};")
+                conn.commit()
+            except Exception:
+                pass
             # count final processed rows (best-effort)
             inserted += i % batch_size
+            try:
+                crud.update_job_progress(db, job_id, processed=inserted)
+            except Exception:
+                pass
             publish_progress(job_id, {"status":"complete","processed":inserted,"total":total,"message":"Import complete"})
             crud.update_job_progress(db, job_id, processed=inserted, status="complete")
     except Exception as e:

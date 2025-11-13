@@ -1,6 +1,6 @@
 from celery import Celery
 from app.config import settings
-from urllib.parse import urlparse
+import ssl
 
 
 # Fallback to REDIS_URL if explicit Celery URLs are not provided
@@ -21,9 +21,9 @@ celery_app.conf.task_tracking_started = True
 # Upstash/Redis over TLS: disable cert validation if using rediss and no CA provided
 try:
     if (broker_url and broker_url.startswith("rediss://")):
-        celery_app.conf.broker_use_ssl = {"cert_reqs": "CERT_NONE"}
+        celery_app.conf.broker_use_ssl = {"ssl_cert_reqs": ssl.CERT_NONE}
     if (result_backend and result_backend.startswith("rediss://")):
-        celery_app.conf.redis_backend_use_ssl = {"cert_reqs": "CERT_NONE"}
+        celery_app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": ssl.CERT_NONE}
 except Exception:
     pass
 
