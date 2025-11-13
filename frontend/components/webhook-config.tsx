@@ -1,50 +1,101 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Plus, Edit, Trash2, CheckCircle, AlertCircle, Zap } from "lucide-react"
+import { API_BASE_URL } from "../lib/api"
 
 interface Webhook {
   id: number
   url: string
-  events: string[]
+  event: string
   enabled: boolean
-  lastTriggered?: string
-  lastStatus?: "success" | "failed"
+  created_at: string
 }
 
-const mockWebhooks: Webhook[] = [
-  {
-    id: 1,
-    url: "https://api.example.com/webhooks/products",
-    events: ["product.created", "product.updated"],
-    enabled: true,
-    lastTriggered: "2 hours ago",
-    lastStatus: "success",
-  },
-  {
-    id: 2,
-    url: "https://api.example.com/webhooks/inventory",
-    events: ["inventory.changed"],
-    enabled: true,
-    lastTriggered: "1 minute ago",
-    lastStatus: "success",
-  },
-  {
-    id: 3,
-    url: "https://notifications.example.com/import",
-    events: ["import.completed"],
-    enabled: false,
-    lastTriggered: "3 days ago",
-    lastStatus: "failed",
-  },
-]
+interface WebhookGroup {
+  id: number
+  url: string
+  events: string[]
+  enabled: boolean
+}
 
 export default function WebhookConfig() {
-  const [webhooks, setWebhooks] = useState(mockWebhooks)
+  const [webhooks, setWebhooks] = useState<Webhook[]>([])
   const [showForm, setShowForm] = useState(false)
+  const [formUrl, setFormUrl] = useState("")
+  const [selectedEvents, setSelectedEvents] = useState<string[]>([])
 
-  const toggleWebhook = (id: number) => {
-    setWebhooks(webhooks.map((w) => (w.id === id ? { ...w, enabled: !w.enabled } : w)))
+  const fetchWebhooks = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/webhooks`)
+      const data = await res.json()
+      setWebhooks(data)
+    } catch {}
+  }
+
+  useEffect(() => {
+    fetchWebhooks()
+  }, [])
+
+  const groupedWebhooks = webhooks.reduce((acc, w) => {
+    const existing = acc.find(g => g.url === w.url)
+    if (existing) {
+      existing.events.push(w.event)
+      if (!w.enabled) existing.enabled = false
+    } else {
+      acc.push({ id: w.id, url: w.url, events: [w.event], enabled: w.enabled })
+    }
+    return acc
+  }, [] as WebhookGroup[])
+
+  const toggleWebhook = async (url: string) => {
+    const group = webhooks.filter(w => w.url === url)
+    const newEnabled = !group[0]?.enabled
+    await Promise.all(group.map(w =>
+      fetch(`${API_BASE_URL}/webhooks/${w.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newEnabled })
+      })
+    ))
+    fetchWebhooks()
+  }
+
+  const deleteWebhook = async (url: string) => {
+    if (!confirm("Delete this webhook?")) return
+    const group = webhooks.filter(w => w.url === url)
+    await Promise.all(group.map(w => fetch(`${API_BASE_URL}/webhooks/${w.id}`, { method: "DELETE" })))
+    fetchWebhooks()
+  }
+
+  const testWebhook = async (id: number) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/webhooks/${id}/test`, { method: "POST" })
+      const data = await res.json()
+      alert(data.success ? `Success: ${data.status}` : `Failed: ${data.error || data.status}`)
+    } catch (e: any) {
+      alert(`Error: ${e.message}`)
+    }
+  }
+
+  const createWebhook = async () => {
+    if (!formUrl || selectedEvents.length === 0) {
+      alert("Please enter URL and select events")
+      return
+    }
+    try {
+      await fetch(`${API_BASE_URL}/webhooks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: formUrl, events: selectedEvents, enabled: true })
+      })
+      setFormUrl("")
+      setSelectedEvents([])
+      setShowForm(false)
+      fetchWebhooks()
+    } catch (e: any) {
+      alert(`Failed: ${e.message}`)
+    }
   }
 
   return (
@@ -63,7 +114,6 @@ export default function WebhookConfig() {
         </button>
       </div>
 
-      {/* Add Webhook Form */}
       {showForm && (
         <div className="bg-[#0f0f0f] border border-border rounded-lg p-6 mb-6">
           <h3 className="text-lg font-semibold text-foreground mb-4">Create New Webhook</h3>
@@ -72,6 +122,8 @@ export default function WebhookConfig() {
               <label className="block text-sm font-medium text-foreground mb-2">Webhook URL</label>
               <input
                 type="url"
+                value={formUrl}
+                onChange={(e) => setFormUrl(e.target.value)}
                 placeholder="https://api.example.com/webhook"
                 className="w-full bg-[#0f0f0f] border border-border rounded-lg px-4 py-2 text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary"
               />
@@ -81,14 +133,25 @@ export default function WebhookConfig() {
               <div className="space-y-2">
                 {["product.created", "product.updated", "product.deleted", "import.completed"].map((event) => (
                   <label key={event} className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" className="rounded" />
+                    <input
+                      type="checkbox"
+                      checked={selectedEvents.includes(event)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedEvents([...selectedEvents, event])
+                        } else {
+                          setSelectedEvents(selectedEvents.filter(ev => ev !== event))
+                        }
+                      }}
+                      className="rounded"
+                    />
                     <span className="text-sm text-foreground">{event}</span>
                   </label>
                 ))}
               </div>
             </div>
             <div className="flex gap-2">
-              <button className="flex-1 bg-primary text-primary-foreground py-2 rounded-lg hover:bg-primary/90 transition-colors">
+              <button onClick={createWebhook} className="flex-1 bg-primary text-primary-foreground py-2 rounded-lg hover:bg-primary/90 transition-colors">
                 Create Webhook
               </button>
               <button
@@ -102,11 +165,10 @@ export default function WebhookConfig() {
         </div>
       )}
 
-      {/* Webhooks List */}
       <div className="space-y-4">
-        {webhooks.map((webhook) => (
+        {groupedWebhooks.map((group) => (
           <div
-            key={webhook.id}
+            key={group.id}
             className="bg-[#0f0f0f] border border-border rounded-lg p-6 hover:border-border/80 transition-colors"
           >
             <div className="flex items-start justify-between mb-4">
@@ -116,72 +178,49 @@ export default function WebhookConfig() {
                     <Zap className="text-secondary" size={20} />
                   </div>
                   <div>
-                    <p className="font-mono text-sm text-foreground break-all">{webhook.url}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{webhook.events.join(", ")}</p>
+                    <p className="font-mono text-sm text-foreground break-all">{group.url}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{group.events.join(", ")}</p>
                   </div>
                 </div>
               </div>
               <div className="flex gap-2">
-                <button className="p-2 hover:bg-[#1a1a1a] rounded transition-colors text-muted-foreground hover:text-foreground">
-                  <Edit size={18} />
-                </button>
-                <button className="p-2 hover:bg-destructive/10 rounded transition-colors text-destructive">
+                <button onClick={() => deleteWebhook(group.url)} className="p-2 hover:bg-destructive/10 rounded transition-colors text-destructive">
                   <Trash2 size={18} />
                 </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Status</p>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => toggleWebhook(webhook.id)}
+                    onClick={() => toggleWebhook(group.url)}
                     className={`relative w-12 h-6 rounded-full transition-colors ${
-                      webhook.enabled ? "bg-primary" : "bg-[#1a1a1a]"
+                      group.enabled ? "bg-primary" : "bg-[#1a1a1a]"
                     }`}
                   >
                     <div
                       className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${
-                        webhook.enabled ? "right-1" : "left-1"
+                        group.enabled ? "right-1" : "left-1"
                       }`}
                     />
                   </button>
-                  <span className="text-sm text-foreground">{webhook.enabled ? "Enabled" : "Disabled"}</span>
+                  <span className="text-sm text-foreground">{group.enabled ? "Enabled" : "Disabled"}</span>
                 </div>
               </div>
 
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Last Triggered</p>
-                <p className="text-sm text-foreground">{webhook.lastTriggered || "-"}</p>
-              </div>
-
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Last Status</p>
-                <div className="flex items-center gap-2">
-                  {webhook.lastStatus === "success" ? (
-                    <>
-                      <CheckCircle size={16} className="text-primary" />
-                      <span className="text-sm text-primary">Success</span>
-                    </>
-                  ) : (
-                    <>
-                      <AlertCircle size={16} className="text-destructive" />
-                      <span className="text-sm text-destructive">Failed</span>
-                    </>
-                  )}
-                </div>
+                <button onClick={() => testWebhook(group.id)} className="w-full text-sm py-2 border border-border rounded hover:bg-[#1a1a1a] transition-colors text-muted-foreground hover:text-foreground">
+                  Send Test Webhook
+                </button>
               </div>
             </div>
-
-            <button className="mt-4 w-full text-sm py-2 border border-border rounded hover:bg-[#1a1a1a] transition-colors text-muted-foreground hover:text-foreground">
-              Send Test Webhook
-            </button>
           </div>
         ))}
       </div>
 
-      {webhooks.length === 0 && (
+      {groupedWebhooks.length === 0 && (
         <div className="text-center py-12 bg-[#0f0f0f] border border-border rounded-lg">
           <p className="text-muted-foreground mb-4">No webhooks configured yet</p>
           <button onClick={() => setShowForm(true)} className="text-primary hover:text-primary/80">

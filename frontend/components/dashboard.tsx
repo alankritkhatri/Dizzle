@@ -1,8 +1,19 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { TrendingUp, FileCheck, AlertCircle } from "lucide-react"
+import { API_BASE_URL } from "../lib/api"
 
 export default function Dashboard() {
+  const [stats, setStats] = useState({ total_products: 0, recent_uploads: 0, active_webhooks: 0 })
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/stats`)
+      .then(res => res.json())
+      .then(data => setStats(data))
+      .catch(() => {})
+  }, [])
+
   return (
     <div className="p-8">
       <div className="mb-8">
@@ -15,7 +26,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-muted-foreground text-sm">Total Products</p>
-              <p className="text-3xl font-bold text-foreground mt-2">0</p>
+              <p className="text-3xl font-bold text-foreground mt-2">{stats.total_products.toLocaleString()}</p>
             </div>
             <div className="bg-primary/10 p-3 rounded-lg">
               <TrendingUp className="text-primary" size={24} />
@@ -27,7 +38,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-muted-foreground text-sm">Recent Uploads</p>
-              <p className="text-3xl font-bold text-foreground mt-2">0</p>
+              <p className="text-3xl font-bold text-foreground mt-2">{stats.recent_uploads}</p>
             </div>
             <div className="bg-secondary/10 p-3 rounded-lg">
               <FileCheck className="text-secondary" size={24} />
@@ -39,7 +50,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-muted-foreground text-sm">Active Webhooks</p>
-              <p className="text-3xl font-bold text-foreground mt-2">0</p>
+              <p className="text-3xl font-bold text-foreground mt-2">{stats.active_webhooks}</p>
             </div>
             <div className="bg-destructive/10 p-3 rounded-lg">
               <AlertCircle className="text-destructive" size={24} />

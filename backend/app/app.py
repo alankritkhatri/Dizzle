@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .database import SessionLocal, engine
 from . import models, crud, tasks
-import uuid, os
+import uuid, os, requests
 import redis, json
 from .config import settings
 
@@ -178,3 +178,102 @@ def bulk_delete(confirm: bool = False, db: Session = Depends(get_db)):
     deleted = db.query(models.Product).delete()
     db.commit()
     return {"deleted": deleted}
+
+@app.get("/stats")
+def get_stats(db: Session = Depends(get_db)):
+    total_products = db.query(models.Product).count()
+    recent_uploads = db.query(models.ImportJob).filter(models.ImportJob.status == "complete").count()
+    active_webhooks = db.query(models.Webhook).filter(models.Webhook.enabled == True).count()
+    return {
+        "total_products": total_products,
+        "recent_uploads": recent_uploads,
+        "active_webhooks": active_webhooks
+    }
+
+class WebhookCreate(BaseModel):
+    url: str
+    events: list[str]
+    enabled: bool = True
+
+class WebhookUpdate(BaseModel):
+    url: str = None
+    event: str = None
+    enabled: bool = None
+
+@app.get("/webhooks")
+def list_webhooks(db: Session = Depends(get_db)):
+    webhooks = db.query(models.Webhook).all()
+    return [{"id": w.id, "url": w.url, "event": w.event, "enabled": w.enabled, "created_at": w.created_at} for w in webhooks]
+
+@app.post("/webhooks")
+def create_webhook(payload: WebhookCreate, db: Session = Depends(get_db)):
+    webhooks = []
+    for event in payload.events:
+        wh = models.Webhook(url=payload.url, event=event, enabled=payload.enabled)
+        db.add(wh)
+        webhooks.append(wh)
+    db.commit()
+    return [{"id": w.id, "url": w.url, "event": w.event, "enabled": w.enabled, "created_at": w.created_at} for w in webhooks]
+
+@app.put("/webhooks/{webhook_id}")
+def update_webhook(webhook_id: int, payload: WebhookUpdate, db: Session = Depends(get_db)):
+    wh = db.query(models.Webhook).filter(models.Webhook.id == webhook_id).first()
+    if not wh:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    if payload.url is not None:
+        wh.url = payload.url
+    if payload.event is not None:
+        wh.event = payload.event
+    if payload.enabled is not None:
+        wh.enabled = payload.enabled
+    db.commit()
+    db.refresh(wh)
+    return {"id": wh.id, "url": wh.url, "event": wh.event, "enabled": wh.enabled, "created_at": wh.created_at}
+
+@app.delete("/webhooks/{webhook_id}")
+def delete_webhook(webhook_id: int, db: Session = Depends(get_db)):
+    wh = db.query(models.Webhook).filter(models.Webhook.id == webhook_id).first()
+    if not wh:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    db.delete(wh)
+    db.commit()
+    return {"deleted": True}
+
+@app.post("/webhooks/{webhook_id}/test")
+def test_webhook(webhook_id: int, db: Session = Depends(get_db)):
+    wh = db.query(models.Webhook).filter(models.Webhook.id == webhook_id).first()
+    if not wh:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    try:
+        res = requests.post(wh.url, json={"event": wh.event, "test": True}, timeout=5)
+        return {"status": res.status_code, "success": res.ok}
+    except Exception as e:
+        return {"status": 0, "success": False, "error": str(e)}
+
+@app.put("/products/{product_id}")
+def update_product(product_id: int, payload: ProductCreate, db: Session = Depends(get_db)):
+    prod = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not prod:
+        raise HTTPException(status_code=404, detail="Product not found")
+    sku_lower = payload.sku.strip().lower()
+    existing = db.query(models.Product).filter(models.Product.sku_lower == sku_lower, models.Product.id != product_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="SKU already exists")
+    prod.sku = payload.sku.strip()
+    prod.sku_lower = sku_lower
+    prod.name = payload.name
+    prod.description = payload.description
+    prod.price_cents = payload.price_cents
+    prod.active = payload.active
+    db.commit()
+    db.refresh(prod)
+    return {"id": prod.id, "sku": prod.sku, "sku_lower": prod.sku_lower, "name": prod.name, "description": prod.description, "price_cents": prod.price_cents, "active": prod.active, "created_at": prod.created_at, "updated_at": prod.updated_at}
+
+@app.delete("/products/{product_id}")
+def delete_product(product_id: int, db: Session = Depends(get_db)):
+    prod = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not prod:
+        raise HTTPException(status_code=404, detail="Product not found")
+    db.delete(prod)
+    db.commit()
+    return {"deleted": True}

@@ -57,16 +57,6 @@ export default function ProductManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, filterActive, currentPage])
 
-  const filteredProducts = useMemo(() => {
-    return mockProducts.filter((product) => {
-      const matchesSearch =
-        product.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        product.name.toLowerCase().includes(searchTerm.toLowerCase())
-      const matchesActive = filterActive === null || product.active === filterActive
-      return matchesSearch && matchesActive
-    })
-  }, [searchTerm, filterActive])
-
   const totalPages = Math.max(1, Math.ceil(total / itemsPerPage))
   const paginatedProducts = items
 
@@ -79,6 +69,40 @@ export default function ProductManagement() {
     } catch (e: any) {
       alert(e?.message || "Failed to delete")
     }
+  }
+
+  const onDeleteProduct = async (id: number) => {
+    if (!confirm("Delete this product?")) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/products/${id}`, { method: "DELETE" })
+      if (!res.ok) throw new Error(await res.text())
+      await fetchProducts()
+    } catch (e: any) {
+      alert(e?.message || "Failed to delete")
+    }
+  }
+
+  const onEditProduct = (product: ApiProduct) => {
+    const sku = prompt("SKU:", product.sku)
+    if (!sku) return
+    const name = prompt("Name:", product.name)
+    if (!name) return
+    const priceStr = prompt("Price (cents):", String(product.price_cents || 0))
+    const price_cents = priceStr ? parseInt(priceStr) : 0
+    const description = prompt("Description:", product.description || "") || ""
+    const activeStr = prompt("Active (true/false):", String(product.active))
+    const active = activeStr === "true"
+
+    fetch(`${API_BASE_URL}/products/${product.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sku, name, description, price_cents, active })
+    })
+      .then(res => {
+        if (!res.ok) throw new Error("Update failed")
+        return fetchProducts()
+      })
+      .catch(e => alert(e.message))
   }
 
   return (
@@ -168,10 +192,10 @@ export default function ProductManagement() {
                   </td>
                   <td className="px-6 py-4 text-sm">
                     <div className="flex gap-2">
-                      <button className="p-2 hover:bg-[#2a2a2a] rounded transition-colors text-muted-foreground hover:text-foreground">
+                      <button onClick={() => onEditProduct(product)} className="p-2 hover:bg-[#2a2a2a] rounded transition-colors text-muted-foreground hover:text-foreground">
                         <Edit size={18} />
                       </button>
-                      <button className="p-2 hover:bg-destructive/10 rounded transition-colors text-destructive">
+                      <button onClick={() => onDeleteProduct(product.id)} className="p-2 hover:bg-destructive/10 rounded transition-colors text-destructive">
                         <Trash2 size={18} />
                       </button>
                     </div>
@@ -186,7 +210,7 @@ export default function ProductManagement() {
         <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-[#1a1a1a]">
           <p className="text-sm text-muted-foreground">
             Showing {paginatedProducts.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0} to{" "}
-            {Math.min(currentPage * itemsPerPage, filteredProducts.length)} of {filteredProducts.length} products
+            {Math.min(currentPage * itemsPerPage, total)} of {total} products
           </p>
           <div className="flex gap-2">
             <button
