@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { TrendingUp, FileCheck, AlertCircle, Upload, CheckCircle, Loader, RefreshCcw, Trash2 } from "lucide-react"
 import { API_BASE_URL } from "../lib/api"
 
@@ -32,6 +32,8 @@ export default function Dashboard() {
   // Import jobs state
   const [jobs, setJobs] = useState<ImportJob[]>([])
   const [loadingJobs, setLoadingJobs] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const completedSeenRef = useRef<Set<number>>(new Set())
 
   // Fetch stats on mount
   useEffect(() => {
@@ -68,6 +70,17 @@ export default function Dashboard() {
       // Handle both {jobs: [...]} or direct array
       const list: ImportJob[] = Array.isArray(data) ? data : data.jobs || []
       setJobs(list)
+      // Refresh stats once when a job completes
+      let shouldRefresh = false
+      for (const j of list) {
+        if (j.status === "complete" && !completedSeenRef.current.has(j.id)) {
+          completedSeenRef.current.add(j.id)
+          shouldRefresh = true
+        }
+      }
+      if (shouldRefresh) {
+        fetchStats()
+      }
     } catch {
       // ignore errors
     } finally {
@@ -90,38 +103,17 @@ export default function Dashboard() {
           throw new Error(err.detail || "Upload failed")
         }
         const { job_id } = await res.json()
-        setStatus("processing")
-        setStatusText(`Job ${job_id} started`)
-        // Open WebSocket for progress
-        const api = new URL(API_BASE_URL)
-        const wsProto = api.protocol === "https:" ? "wss" : "ws"
-        const wsHost = api.host
-        const ws = new WebSocket(`${wsProto}://${wsHost}/ws/import-progress/${job_id}`)
-        ws.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(ev.data)
-            const processed = msg.processed || 0
-            const total = msg.total || 0
-            const pct = total ? Math.floor((processed / total) * 100) : 0
-            setProgress(pct)
-            setStatusText(msg.message || msg.status || "")
-            if (msg.status === "complete") {
-              ws.close()
-              setStatus("success")
-            } else if (msg.status === "failed") {
-              ws.close()
-              setErrorMessage(msg.message || "Import failed")
-              setStatus("error")
-            }
-          } catch { }
-        }
-        ws.onerror = () => {
-          // keep UI usable even if ws fails
-          setStatusText("Tracking progress...")
-        }
+        // Immediately refresh jobs list; rely on Recent Imports for progress
+        fetchJobs()
+        setStatus("idle")
+        setStatusText("")
+        setProgress(0)
+        // clear the input so same file can be reselected
+        if (inputRef.current) inputRef.current.value = ""
       } catch (err: any) {
-        setErrorMessage(err?.message || "Upload failed")
-        setStatus("error")
+        // Keep uploader available; don't surface error box
+        setErrorMessage("")
+        setStatus("idle")
       }
     }
   }
@@ -196,35 +188,34 @@ export default function Dashboard() {
               </div>
               <p className="text-xs text-muted-foreground">Maximum 5GB • CSV format • You can upload another file while imports run</p>
             </div>
-            <input type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
+            <input ref={inputRef} type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
           </label>
 
           {/* Uploading State */}
-          {(status === "uploading" || status === "processing") && (
+          {status === "uploading" && (
             <div className="bg-[#0f0f0f] border border-border rounded-lg p-8">
               <div className="flex items-center gap-4 mb-6">
                 <Loader className="text-secondary animate-spin" size={24} />
                 <div>
                   <p className="font-medium text-foreground">{fileName}</p>
-                  <p className="text-sm text-muted-foreground">{statusText || "Processing upload..."}</p>
+                  <p className="text-sm text-muted-foreground">Uploading file...</p>
                 </div>
               </div>
 
               <div className="space-y-4">
                 <div>
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-sm text-muted-foreground">Parsing CSV</span>
-                    <span className="text-sm font-medium text-foreground">{Math.round(progress)}%</span>
+                    <span className="text-sm text-muted-foreground">Uploading</span>
+                    <span className="text-sm font-medium text-foreground">...</span>
                   </div>
                   <div className="w-full bg-[#1a1a1a] rounded-full h-2 overflow-hidden">
-                    <div className="bg-primary h-full transition-all duration-300" style={{ width: `${progress}%` }} />
+                    <div className="bg-primary h-full transition-all duration-300" style={{ width: `35%` }} />
                   </div>
                 </div>
 
                 <div className="text-xs text-muted-foreground space-y-1 mt-6 pt-4 border-t border-border">
-                  <p>• Validating records</p>
-                  <p>• Checking for duplicates</p>
-                  <p>• Processing SKU matching</p>
+                  <p>• Job will appear in Recent Imports</p>
+                  <p>• Progress updates are shown there</p>
                 </div>
               </div>
             </div>
@@ -256,26 +247,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Error State */}
-          {status === "error" && (
-            <div className="bg-[#0f0f0f] border border-destructive/30 rounded-lg p-8">
-              <div className="flex items-center gap-4 mb-4">
-                <div className="bg-destructive/10 p-3 rounded-lg">
-                  <AlertCircle className="text-destructive" size={32} />
-                </div>
-                <div>
-                  <p className="font-medium text-foreground text-lg">Upload failed</p>
-                  <p className="text-sm text-destructive">{errorMessage || "An error occurred"}</p>
-                </div>
-              </div>
-              <button
-                onClick={handleRetry}
-                className="mt-6 w-full bg-destructive text-destructive-foreground py-3 rounded-lg font-medium hover:bg-destructive/90 transition-colors"
-              >
-                Try Again
-              </button>
-            </div>
-          )}
+          {/* Error UI intentionally removed */}
 
           {/* CSV Format Guide */}
           <div className="mt-6 bg-[#0f0f0f] border border-border rounded-lg p-6">
@@ -312,64 +284,68 @@ export default function Dashboard() {
           <p className="text-sm text-muted-foreground">No import jobs yet.</p>
         )}
         <div className="space-y-4">
-          {jobs.map(job => (
-            <div key={job.id} className="border border-border rounded p-4">
-              <div className="flex justify-between items-center mb-2">
-                <div className="text-sm font-medium text-foreground">Upload #{job.id} {job.original_filename && (
-                  <span className="text-muted-foreground">({job.original_filename})</span>
-                )}</div>
-                <div className="flex items-center gap-2">
-                  <div
-                    className={`text-xs px-2 py-1 rounded ${job.status === 'complete' ? 'bg-primary/10 text-primary' : job.status === 'failed' ? 'bg-destructive/10 text-destructive' : 'bg-secondary/10 text-secondary'}`}
-                  >
-                    {job.status}
+          {jobs.map(job => {
+            const displayPercent = job.status === 'complete' ? 100 : Math.max(0, Math.min(100, job.percent))
+            const displayProcessed = job.status === 'complete' ? job.total_rows : job.processed_rows
+            return (
+              <div key={job.id} className="border border-border rounded p-4">
+                <div className="flex justify-between items-center mb-2">
+                  <div className="text-sm font-medium text-foreground">Upload #{job.id} {job.original_filename && (
+                    <span className="text-muted-foreground">({job.original_filename})</span>
+                  )}</div>
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`text-xs px-2 py-1 rounded ${job.status === 'complete' ? 'bg-primary/10 text-primary' : job.status === 'failed' ? 'bg-destructive/10 text-destructive' : 'bg-secondary/10 text-secondary'}`}
+                    >
+                      {job.status}
+                    </div>
+                    <button
+                      className="text-xs px-2 py-1 border border-border rounded hover:bg-[#1a1a1a] flex items-center gap-1"
+                      title={job.status === 'running' ? 'Stop and delete job' : 'Delete job'}
+                      onClick={async () => {
+                        if (job.status === 'running') {
+                          const ok = confirm('This will stop and delete the running job. Continue?')
+                          if (!ok) return
+                        }
+                        await fetch(`${API_BASE_URL}/import-jobs/${job.id}`, { method: 'DELETE' })
+                        fetchJobs()
+                      }}
+                    >
+                      <Trash2 size={14} /> Delete
+                    </button>
                   </div>
-                  <button
-                    className="text-xs px-2 py-1 border border-border rounded hover:bg-[#1a1a1a] flex items-center gap-1"
-                    title={job.status === 'running' ? 'Stop and delete job' : 'Delete job'}
-                    onClick={async () => {
-                      if (job.status === 'running') {
-                        const ok = confirm('This will stop and delete the running job. Continue?')
-                        if (!ok) return
-                      }
-                      await fetch(`${API_BASE_URL}/import-jobs/${job.id}`, { method: 'DELETE' })
+                </div>
+                <div className="w-full bg-[#1a1a1a] h-2 rounded overflow-hidden mb-2">
+                  <div
+                    className={`h-full transition-all duration-500 ${job.status === 'failed' ? 'bg-destructive' : 'bg-primary'}`}
+                    style={{ width: `${displayPercent}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                  <span>{displayProcessed}/{job.total_rows} rows</span>
+                  <span>{displayPercent}%</span>
+                </div>
+                {job.error && <p className="text-xs text-destructive">{job.error}</p>}
+                {job.status === 'failed' && (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault()
+                      await fetch(`${API_BASE_URL}/import-jobs/${job.id}/retry`, { method: 'POST' })
                       fetchJobs()
                     }}
+                    className="mt-2"
                   >
-                    <Trash2 size={14} /> Delete
-                  </button>
-                </div>
+                    <button
+                      type="submit"
+                      className="text-xs px-2 py-1 border border-destructive text-destructive rounded hover:bg-destructive/10"
+                    >
+                      Retry
+                    </button>
+                  </form>
+                )}
               </div>
-              <div className="w-full bg-[#1a1a1a] h-2 rounded overflow-hidden mb-2">
-                <div
-                  className={`h-full transition-all duration-500 ${job.status === 'failed' ? 'bg-destructive' : 'bg-primary'}`}
-                  style={{ width: `${job.percent}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                <span>{job.processed_rows}/{job.total_rows} rows</span>
-                <span>{job.percent}%</span>
-              </div>
-              {job.error && <p className="text-xs text-destructive">{job.error}</p>}
-              {job.status === 'failed' && (
-                <form
-                  onSubmit={async (e) => {
-                    e.preventDefault()
-                    await fetch(`${API_BASE_URL}/import-jobs/${job.id}/retry`, { method: 'POST' })
-                    fetchJobs()
-                  }}
-                  className="mt-2"
-                >
-                  <button
-                    type="submit"
-                    className="text-xs px-2 py-1 border border-destructive text-destructive rounded hover:bg-destructive/10"
-                  >
-                    Retry
-                  </button>
-                </form>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 

@@ -60,8 +60,9 @@ export default function FileUpload() {
           setStatusText("Tracking progress...")
         }
       } catch (err: any) {
-        setErrorMessage(err?.message || "Upload failed")
-        setStatus("error")
+        // Keep uploader available; don't render error box
+        setErrorMessage("")
+        setStatus("idle")
       }
     }
   }
@@ -156,26 +157,7 @@ export default function FileUpload() {
           </div>
         )}
 
-        {/* Error State */}
-        {status === "error" && (
-          <div className="bg-[#0f0f0f] border border-destructive/30 rounded-lg p-8">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="bg-destructive/10 p-3 rounded-lg">
-                <AlertCircle className="text-destructive" size={32} />
-              </div>
-              <div>
-                <p className="font-medium text-foreground text-lg">Upload failed</p>
-                <p className="text-sm text-destructive">{errorMessage || "An error occurred"}</p>
-              </div>
-            </div>
-            <button
-              onClick={handleRetry}
-              className="mt-6 w-full bg-destructive text-destructive-foreground py-3 rounded-lg font-medium hover:bg-destructive/90 transition-colors"
-            >
-              Try Again
-            </button>
-          </div>
-        )}
+        {/* Error UI intentionally removed */}
 
         {/* CSV Format Guide */}
         <div className="mt-8 bg-[#0f0f0f] border border-border rounded-lg p-6">
