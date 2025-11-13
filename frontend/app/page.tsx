@@ -3,7 +3,6 @@
 import { useState } from "react"
 import Sidebar from "@/components/sidebar"
 import Dashboard from "@/components/dashboard"
-import FileUpload from "@/components/file-upload"
 import ProductManagement from "@/components/product-management"
 import WebhookConfig from "@/components/webhook-config"
 
@@ -12,8 +11,6 @@ export default function Home() {
 
   const renderPage = () => {
     switch (currentPage) {
-      case "upload":
-        return <FileUpload />
       case "products":
         return <ProductManagement />
       case "webhooks":

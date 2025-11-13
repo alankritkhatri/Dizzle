@@ -1,6 +1,6 @@
 "use client"
 
-import { Upload, Package, Webhook, LayoutDashboard } from "lucide-react"
+import { Package, Webhook, LayoutDashboard } from "lucide-react"
 
 interface SidebarProps {
   currentPage: string
@@ -10,7 +10,6 @@ interface SidebarProps {
 export default function Sidebar({ currentPage, setCurrentPage }: SidebarProps) {
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "upload", label: "Import CSV", icon: Upload },
     { id: "products", label: "Products", icon: Package },
     { id: "webhooks", label: "Webhooks", icon: Webhook },
   ]

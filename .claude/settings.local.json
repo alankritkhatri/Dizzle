@@ -9,7 +9,10 @@
       "Bash(timeout 10 python:*)",
       "Bash(python -c:*)",
       "Bash(timeout 5 python:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(tree:*)",
+      "Bash(dir /B /S \"C:\\Users\\alank\\Desktop\\Dizzle\\frontend\")",
+      "Bash(findstr:*)"
     ],
     "deny": [],
     "ask": []

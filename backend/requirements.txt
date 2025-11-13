@@ -3,10 +3,11 @@ uvicorn
 sqlalchemy
 psycopg2-binary
 pydantic<2
+pydantic-settings
 python-multipart
 pandas
-celery
-redis  # Required for Celery broker (works with Upstash Redis)
-requests  # Required for Upstash REST API calls
+celery[redis]
+redis
+requests
 alembic
 loguru

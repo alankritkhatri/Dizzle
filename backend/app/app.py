@@ -41,7 +41,7 @@ async def upload_csv(file:UploadFile = File(...),db:Session = Depends(get_db)):
         raise HTTPException(status_code=400,detail = "please upload a csv file")
 
     job  = crud.create_import_job(db)
-    file_id = f"{job.id}_{uuid.uuidv4().hex}_{file.filename}"
+    file_id = f"{job.id}_{uuid.uuid4().hex}_{file.filename}"
     dest_path = os.path.join(UPLOAD_DIR,file_id)
     size = 0
     with open(dest_path, "wb") as out_f:
