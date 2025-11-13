@@ -184,22 +184,20 @@ export default function Dashboard() {
         <h2 className="text-2xl font-bold text-foreground mb-4">Quick Import</h2>
 
         <div className="max-w-3xl">
-          {/* Upload Area */}
-          {status === "idle" && (
-            <label className="block bg-[#0f0f0f] border-2 border-dashed border-border rounded-lg p-12 cursor-pointer hover:border-primary/50 transition-colors">
-              <div className="flex flex-col items-center gap-4">
-                <div className="bg-primary/10 p-4 rounded-lg">
-                  <Upload className="text-primary" size={32} />
-                </div>
-                <div className="text-center">
-                  <p className="text-lg font-medium text-foreground">Drag and drop your CSV file</p>
-                  <p className="text-muted-foreground text-sm mt-1">or click to browse</p>
-                </div>
-                <p className="text-xs text-muted-foreground">Maximum 5GB • CSV format • Up to 500,000 records</p>
+          {/* Upload Area (always available) */}
+          <label className="block bg-[#0f0f0f] border-2 border-dashed border-border rounded-lg p-12 cursor-pointer hover:border-primary/50 transition-colors">
+            <div className="flex flex-col items-center gap-4">
+              <div className="bg-primary/10 p-4 rounded-lg">
+                <Upload className="text-primary" size={32} />
               </div>
-              <input type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
-            </label>
-          )}
+              <div className="text-center">
+                <p className="text-lg font-medium text-foreground">Drag and drop your CSV file</p>
+                <p className="text-muted-foreground text-sm mt-1">or click to browse</p>
+              </div>
+              <p className="text-xs text-muted-foreground">Maximum 5GB • CSV format • You can upload another file while imports run</p>
+            </div>
+            <input type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
+          </label>
 
           {/* Uploading State */}
           {(status === "uploading" || status === "processing") && (
@@ -317,7 +315,7 @@ export default function Dashboard() {
           {jobs.map(job => (
             <div key={job.id} className="border border-border rounded p-4">
               <div className="flex justify-between items-center mb-2">
-                <div className="text-sm font-medium text-foreground">Job #{job.id} {job.original_filename && (
+                <div className="text-sm font-medium text-foreground">Upload #{job.id} {job.original_filename && (
                   <span className="text-muted-foreground">({job.original_filename})</span>
                 )}</div>
                 <div className="flex items-center gap-2">
@@ -327,10 +325,13 @@ export default function Dashboard() {
                     {job.status}
                   </div>
                   <button
-                    className="text-xs px-2 py-1 border border-border rounded hover:bg-[#1a1a1a] flex items-center gap-1 disabled:opacity-50"
-                    title={job.status === 'running' ? 'Cannot delete running job' : 'Delete job'}
-                    disabled={job.status === 'running'}
+                    className="text-xs px-2 py-1 border border-border rounded hover:bg-[#1a1a1a] flex items-center gap-1"
+                    title={job.status === 'running' ? 'Stop and delete job' : 'Delete job'}
                     onClick={async () => {
+                      if (job.status === 'running') {
+                        const ok = confirm('This will stop and delete the running job. Continue?')
+                        if (!ok) return
+                      }
                       await fetch(`${API_BASE_URL}/import-jobs/${job.id}`, { method: 'DELETE' })
                       fetchJobs()
                     }}
