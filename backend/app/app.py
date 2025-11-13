@@ -10,12 +10,13 @@ from .upstash_redis import get_upstash_client
 
 app = FastAPI()
 
-# Enable CORS for the Next.js dev server
+# Enable CORS for the Next.js dev server and Vercel deployment
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://dizzle.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
