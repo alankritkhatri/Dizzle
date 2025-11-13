@@ -1,18 +1,28 @@
-import os
 from pydantic_settings import BaseSettings
+from pydantic import Field
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db:5432/postgres")
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
-    CELERY_BROKER_URL: str = REDIS_URL
-    CELERY_RESULT_BACKEND: str = REDIS_URL
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "dev-secret")
+    DATABASE_URL: str = "postgresql://postgres:postgres@db:5432/postgres"
+
+    # Upstash Redis REST API credentials (for pub/sub messaging)
+    UPSTASH_REDIS_REST_URL: str = ""
+    UPSTASH_REDIS_REST_TOKEN: str = ""
+
+    # Upstash Redis URL (redis:// protocol for Celery)
+    # Format: redis://default:<password>@<host>:<port>
+    # You can find this in your Upstash console under "Redis Connect" > "redis-cli"
+    REDIS_URL: str = "redis://redis:6379/0"
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
+
+    SECRET_KEY: str = "dev-secret"
     MAX_UPLOAD_BYTES: int = 5 * 1024 * 1024 * 1024  # 5GB, configurable
-    CSV_BATCH_SIZE: int = int(os.getenv("CSV_BATCH_SIZE", "5000"))  # tuneable
+    CSV_BATCH_SIZE: int = 5000  # tuneable
 
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"
 
 
 settings = Settings()

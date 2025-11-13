@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m alembic:*)",
+      "Bash(cat:*)",
+      "Bash(nul)",
+      "Bash(ping:*)",
+      "Bash(dir /b:*)",
+      "Bash(timeout 10 python:*)",
+      "Bash(python -c:*)",
+      "Bash(timeout 5 python:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

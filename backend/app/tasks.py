@@ -3,15 +3,35 @@ from celery import shared_task, current_task
 from .config import settings
 from .database import engine, SessionLocal
 from . import crud, models
-import csv, io, os, time
-import redis, json
+import csv, io, os, time, json
 from sqlalchemy import text
+from .upstash_redis import get_upstash_client
 
-r = redis.from_url(settings.REDIS_URL)
+# Initialize Upstash Redis client
+upstash_client = get_upstash_client()
+
+# Message ID counter for tracking message order
+_message_counters = {}
 
 def publish_progress(job_id: int, message: dict):
+    """
+    Publish progress update to Upstash Redis
+    Stores the latest message with a message ID for tracking
+    """
     channel = f"import_progress:{job_id}"
-    r.publish(channel, json.dumps(message))
+
+    # Add message ID for tracking
+    if job_id not in _message_counters:
+        _message_counters[job_id] = 0
+    _message_counters[job_id] += 1
+    message["_msg_id"] = _message_counters[job_id]
+
+    # Store as the latest message (with expiration to auto-cleanup)
+    upstash_client.set(
+        f"{channel}:latest",
+        json.dumps(message),
+        ex=3600  # Expire after 1 hour
+    )
 
 @shared_task(bind=True, name="import_csv_task", acks_late=True)
 def import_csv_task(self, file_path: str, job_id: int):

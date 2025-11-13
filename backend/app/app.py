@@ -3,9 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .database import SessionLocal, engine
 from . import models, crud, tasks
-import uuid, os, requests
-import redis, json
+import uuid, os, requests, json, asyncio
 from .config import settings
+from .upstash_redis import get_upstash_client
 
 app = FastAPI()
 
@@ -63,27 +63,49 @@ async def upload_csv(file:UploadFile = File(...),db:Session = Depends(get_db)):
     tasks.import_csv_task.delay(dest_path, job.id)
     return {"job_id": job.id}
 
-r = redis.from_url(settings.REDIS_URL)
+# Initialize Upstash Redis client for pub/sub messaging
+upstash_client = get_upstash_client()
 
 @app.websocket("/ws/import-progress/{job_id}")
 async def ws_import_progress(websocket: WebSocket, job_id: int):
+    """
+    WebSocket endpoint for real-time import progress updates
+    Uses Upstash Redis with polling mechanism since REST API doesn't support traditional pub/sub
+    """
     await websocket.accept()
-    pubsub = r.pubsub()
     channel = f"import_progress:{job_id}"
-    pubsub.subscribe(channel)
+    last_message_id = 0
+
     try:
-        # listen to redis messages in a loop
+        # Poll for messages stored in Redis
         while True:
-            message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-            if message:
-                data = json.loads(message['data'])
-                await websocket.send_json(data)
-            # keep alive/ping
+            # Try to get the latest message
+            latest_message = upstash_client.get(f"{channel}:latest")
+
+            if latest_message:
+                try:
+                    data = json.loads(latest_message)
+                    # Only send if it's a new message (check status or use a counter)
+                    message_id = data.get("_msg_id", 0)
+                    if message_id > last_message_id:
+                        await websocket.send_json(data)
+                        last_message_id = message_id
+
+                        # Check if import is complete or failed
+                        if data.get("status") in ["complete", "failed"]:
+                            break
+                except json.JSONDecodeError:
+                    pass
+
+            # Wait before next poll (adjust interval as needed)
+            await asyncio.sleep(0.5)
+
     except Exception as e:
+        print(f"WebSocket error: {e}")
         await websocket.close()
     finally:
-        pubsub.unsubscribe(channel)
-        pubsub.close()
+        # Cleanup: optionally delete the message after completion
+        upstash_client.delete(f"{channel}:latest")
 
 # app/main.py (continued)
 

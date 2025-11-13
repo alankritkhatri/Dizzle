@@ -6,7 +6,7 @@ pydantic<2
 python-multipart
 pandas
 celery
-redis
+redis  # Required for Celery broker (works with Upstash Redis)
+requests  # Required for Upstash REST API calls
 alembic
 loguru
-requests
