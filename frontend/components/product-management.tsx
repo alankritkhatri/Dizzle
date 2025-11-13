@@ -25,11 +25,12 @@ export default function ProductManagement() {
   const [filterActive, setFilterActive] = useState<boolean | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [editingId, setEditingId] = useState<number | null>(null)
-  const itemsPerPage = 5
+  const itemsPerPage = 50
   const [items, setItems] = useState<ApiProduct[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pendingId, setPendingId] = useState<number | null>(null)
 
   const fetchProducts = async () => {
     setLoading(true)
@@ -63,22 +64,28 @@ export default function ProductManagement() {
   const onBulkDelete = async () => {
     if (!confirm("Are you sure? This cannot be undone.")) return
     try {
+      setLoading(true)
       const res = await fetch(`${API_BASE_URL}/products?confirm=true`, { method: "DELETE" })
       if (!res.ok) throw new Error(await res.text())
       await fetchProducts()
     } catch (e: any) {
       alert(e?.message || "Failed to delete")
+    } finally {
+      setLoading(false)
     }
   }
 
   const onDeleteProduct = async (id: number) => {
     if (!confirm("Delete this product?")) return
     try {
+      setPendingId(id)
       const res = await fetch(`${API_BASE_URL}/products/${id}`, { method: "DELETE" })
       if (!res.ok) throw new Error(await res.text())
       await fetchProducts()
     } catch (e: any) {
       alert(e?.message || "Failed to delete")
+    } finally {
+      setPendingId(null)
     }
   }
 
@@ -146,7 +153,7 @@ export default function ProductManagement() {
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
         </select>
-        <button onClick={onBulkDelete} className="bg-destructive text-destructive-foreground px-4 py-2 rounded-lg hover:bg-destructive/90 transition-colors">
+        <button disabled={loading} onClick={onBulkDelete} className="bg-destructive text-destructive-foreground px-4 py-2 rounded-lg hover:bg-destructive/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
           Delete All
         </button>
       </div>
@@ -195,13 +202,18 @@ export default function ProductManagement() {
                       <button onClick={() => onEditProduct(product)} className="p-2 hover:bg-[#2a2a2a] rounded transition-colors text-muted-foreground hover:text-foreground">
                         <Edit size={18} />
                       </button>
-                      <button onClick={() => onDeleteProduct(product.id)} className="p-2 hover:bg-destructive/10 rounded transition-colors text-destructive">
+                      <button disabled={pendingId === product.id} onClick={() => onDeleteProduct(product.id)} className="p-2 hover:bg-destructive/10 rounded transition-colors text-destructive disabled:opacity-50 disabled:cursor-not-allowed">
                         <Trash2 size={18} />
                       </button>
                     </div>
                   </td>
                 </tr>
               ))}
+              {!loading && !error && paginatedProducts.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-center text-muted-foreground">No products found</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, WebSocket, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .database import SessionLocal, engine
+from sqlalchemy import text
 from . import models, crud, tasks
 import uuid, os, requests, json, asyncio
 from .config import settings
@@ -23,6 +24,25 @@ app.add_middleware(
 
 
 models.Base.metadata.create_all(bind=engine)
+
+# Ensure Postgres trigram extension and GIN indexes for faster ILIKE search
+def ensure_search_indexes():
+    try:
+        with engine.begin() as conn:
+            # Create extension if available (Postgres only)
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            # Create GIN trigram indexes to accelerate ILIKE on name/description
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_products_name_trgm ON products USING gin (name gin_trgm_ops)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_products_description_trgm ON products USING gin (description gin_trgm_ops)"
+            ))
+    except Exception as _:
+        # If running on non-Postgres or without permissions, ignore gracefully
+        pass
+
+ensure_search_indexes()
 
 def get_db():
     db = SessionLocal()
@@ -69,7 +89,7 @@ async def upload_csv(file:UploadFile = File(...),db:Session = Depends(get_db)):
             detail=f"Invalid file type. Expected .csv file, got: {file.filename}"
         )
 
-    job  = crud.create_import_job(db)
+    job  = crud.create_import_job(db, original_filename=file.filename)
     file_id = f"{job.id}_{uuid.uuid4().hex}_{file.filename}"
     dest_path = os.path.join(UPLOAD_DIR,file_id)
     size = 0
@@ -92,7 +112,8 @@ async def upload_csv(file:UploadFile = File(...),db:Session = Depends(get_db)):
                 )
             out_f.write(chunk)
 
-    # enqueue async import
+    # update job with file path for potential retry
+    crud.update_job_progress(db, job.id, processed=0, status="queued", file_path=dest_path)
     tasks.import_csv_task.delay(dest_path, job.id)
     return {"job_id": job.id}
 
@@ -154,6 +175,9 @@ class ProductCreate(BaseModel):
 
 @app.get("/products")
 def list_products(q: str = None, sku: str = None, active: bool = None, page: int = 1, per_page: int = 50, db: Session = Depends(get_db)):
+    # Clamp per_page to protect DB
+    per_page = max(1, min(per_page, 200))
+    page = max(1, page)
     query = db.query(models.Product)
     if sku:
         query = query.filter(models.Product.sku_lower == sku.lower())
@@ -244,6 +268,46 @@ def get_stats(db: Session = Depends(get_db)):
         "recent_uploads": recent_uploads,
         "active_webhooks": active_webhooks
     }
+
+@app.get("/import-jobs")
+def list_import_jobs(limit: int = 10, db: Session = Depends(get_db)):
+    limit = max(1, min(limit, 50))
+    jobs = db.query(models.ImportJob).order_by(models.ImportJob.created_at.desc()).limit(limit).all()
+    def to_dict(j):
+        pct = 0
+        if j.total_rows:
+            pct = round((j.processed_rows / j.total_rows) * 100, 2)
+        return {
+            "id": j.id,
+            "status": j.status,
+            "processed_rows": j.processed_rows,
+            "total_rows": j.total_rows,
+            "percent": pct,
+            "error": j.error,
+            "original_filename": j.original_filename,
+            "created_at": j.created_at,
+            "updated_at": j.updated_at,
+        }
+    return {"jobs": [to_dict(j) for j in jobs]}
+
+@app.post("/import-jobs/{job_id}/retry")
+def retry_import_job(job_id: int, db: Session = Depends(get_db)):
+    from datetime import datetime
+    job = db.get(models.ImportJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in ["failed", "complete"]:
+        raise HTTPException(status_code=400, detail="Job is still running or queued")
+    if not job.file_path or not os.path.exists(job.file_path):
+        raise HTTPException(status_code=400, detail="Original file not available for retry")
+    # reset job for retry
+    job.status = "queued"
+    job.processed_rows = 0
+    job.error = None
+    job.updated_at = datetime.utcnow()
+    db.add(job); db.commit(); db.refresh(job)
+    tasks.import_csv_task.delay(job.file_path, job.id)
+    return {"job_id": job.id, "status": job.status}
 
 class WebhookCreate(BaseModel):
     url: str

@@ -3,10 +3,20 @@
 import type React from "react"
 
 import { useEffect, useState } from "react"
-import { TrendingUp, FileCheck, AlertCircle, Upload, CheckCircle, Loader } from "lucide-react"
+import { TrendingUp, FileCheck, AlertCircle, Upload, CheckCircle, Loader, RefreshCcw } from "lucide-react"
 import { API_BASE_URL } from "../lib/api"
 
 type UploadStatus = "idle" | "uploading" | "processing" | "success" | "error"
+
+interface ImportJob {
+  id: number
+  status: string
+  processed_rows: number
+  total_rows: number
+  percent: number
+  original_filename?: string
+  error?: string
+}
 
 export default function Dashboard() {
   // Stats state
@@ -19,9 +29,18 @@ export default function Dashboard() {
   const [errorMessage, setErrorMessage] = useState("")
   const [statusText, setStatusText] = useState("")
 
+  // Import jobs state
+  const [jobs, setJobs] = useState<ImportJob[]>([])
+  const [loadingJobs, setLoadingJobs] = useState(false)
+
   // Fetch stats on mount
   useEffect(() => {
     fetchStats()
+    fetchJobs()
+    const interval = setInterval(() => {
+      fetchJobs()
+    }, 5000)
+    return () => clearInterval(interval)
   }, [])
 
   // Refetch stats after successful upload
@@ -38,6 +57,22 @@ export default function Dashboard() {
       .then(res => res.json())
       .then(data => setStats(data))
       .catch(() => {})
+  }
+
+  const fetchJobs = async () => {
+    setLoadingJobs(true)
+    try {
+      const res = await fetch(`${API_BASE_URL}/import-jobs?limit=5`)
+      if (!res.ok) return
+      const data = await res.json()
+      // Handle both {jobs: [...]} or direct array
+      const list: ImportJob[] = Array.isArray(data) ? data : data.jobs || []
+      setJobs(list)
+    } catch {
+      // ignore errors
+    } finally {
+      setLoadingJobs(false)
+    }
   }
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -260,6 +295,67 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Recent Import Jobs */}
+      <div className="mb-8 bg-[#0f0f0f] border border-border rounded-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold text-foreground">Recent Imports</h2>
+          <button
+            onClick={fetchJobs}
+            className="flex items-center gap-2 text-xs px-3 py-1 border border-border rounded hover:bg-[#1a1a1a]"
+          >
+            <RefreshCcw size={14} /> Refresh
+          </button>
+        </div>
+        {loadingJobs && <p className="text-sm text-muted-foreground">Loading...</p>}
+        {!loadingJobs && jobs.length === 0 && (
+          <p className="text-sm text-muted-foreground">No import jobs yet.</p>
+        )}
+        <div className="space-y-4">
+          {jobs.map(job => (
+            <div key={job.id} className="border border-border rounded p-4">
+              <div className="flex justify-between items-center mb-2">
+                <div className="text-sm font-medium text-foreground">Job #{job.id} {job.original_filename && (
+                  <span className="text-muted-foreground">({job.original_filename})</span>
+                )}</div>
+                <div
+                  className={`text-xs px-2 py-1 rounded ${job.status === 'complete' ? 'bg-primary/10 text-primary' : job.status === 'failed' ? 'bg-destructive/10 text-destructive' : 'bg-secondary/10 text-secondary'}`}
+                >
+                  {job.status}
+                </div>
+              </div>
+              <div className="w-full bg-[#1a1a1a] h-2 rounded overflow-hidden mb-2">
+                <div
+                  className={`h-full transition-all duration-500 ${job.status === 'failed' ? 'bg-destructive' : 'bg-primary'}`}
+                  style={{ width: `${job.percent}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                <span>{job.processed_rows}/{job.total_rows} rows</span>
+                <span>{job.percent}%</span>
+              </div>
+              {job.error && <p className="text-xs text-destructive">{job.error}</p>}
+              {job.status === 'failed' && (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault()
+                    await fetch(`${API_BASE_URL}/import-jobs/${job.id}/retry`, { method: 'POST' })
+                    fetchJobs()
+                  }}
+                  className="mt-2"
+                >
+                  <button
+                    type="submit"
+                    className="text-xs px-2 py-1 border border-destructive text-destructive rounded hover:bg-destructive/10"
+                  >
+                    Retry
+                  </button>
+                </form>
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
