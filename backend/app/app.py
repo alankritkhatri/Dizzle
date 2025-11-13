@@ -333,14 +333,12 @@ def delete_import_job(job_id: int, db: Session = Depends(get_db)):
     job = db.get(models.ImportJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    # If queued, revoke the Celery task before delete
-    if job.status == "queued" and job.task_id:
+    # If queued or running, revoke the Celery task before delete (best-effort)
+    if job.task_id and job.status in ["queued", "running"]:
         try:
-            celery_app.control.revoke(job.task_id, terminate=False)
+            celery_app.control.revoke(job.task_id, terminate=(job.status == "running"))
         except Exception:
             pass
-    if job.status == "running":
-        raise HTTPException(status_code=400, detail="Cannot delete a job that is running")
 
     # Best-effort cleanup of progress key
     try:
