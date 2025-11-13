@@ -56,7 +56,7 @@ export default function Dashboard() {
     fetch(`${API_BASE_URL}/stats`)
       .then(res => res.json())
       .then(data => setStats(data))
-      .catch(() => {})
+      .catch(() => { })
   }
 
   const fetchJobs = async () => {

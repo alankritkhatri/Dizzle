@@ -12,7 +12,9 @@
       "Bash(test:*)",
       "Bash(tree:*)",
       "Bash(dir /B /S \"C:\\Users\\alank\\Desktop\\Dizzle\\frontend\")",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(docker build:*)",
+      "Bash(docker push:*)"
     ],
     "deny": [],
     "ask": []
